@@ -126,9 +126,11 @@ jobs:
           $extract = Join-Path $env:RUNNER_TEMP "minisign"
           Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
           Expand-Archive -Path $zip -DestinationPath $extract -Force
-          $bin = Get-ChildItem -Path $extract -Filter "minisign.exe" -Recurse | Select-Object -First 1
+          $bin = Get-ChildItem -Path $extract -Filter "minisign.exe" -Recurse |
+            Where-Object { $_.FullName -match 'x86_64' -and $_.FullName -notmatch 'aarch64|arm64' } |
+            Select-Object -First 1
           if (-not $bin) {
-            Write-Error "Failed to locate minisign.exe in download"
+            Write-Error "Failed to locate x86_64 minisign.exe in download"
             exit 1
           }
           Add-Content -Path $env:GITHUB_PATH -Value $bin.DirectoryName
@@ -167,15 +169,21 @@ jobs:
       - name: Verify signature with minisign-verify
         shell: pwsh
         env:
-          TOOLBAG_PLUGIN_PUBKEY: ${{ vars.TOOLBAG_PLUGIN_PUBKEY }}
+          TOOLBAG_PLUGIN_PUBKEY_VAR: ${{ vars.TOOLBAG_PLUGIN_PUBKEY }}
+          TOOLBAG_PLUGIN_PUBKEY_SECRET: ${{ secrets.TOOLBAG_PLUGIN_PUBKEY }}
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:TOOLBAG_PLUGIN_PUBKEY)) {
+          $pubkey = if ([string]::IsNullOrWhiteSpace($env:TOOLBAG_PLUGIN_PUBKEY_VAR)) {
+            $env:TOOLBAG_PLUGIN_PUBKEY_SECRET
+          } else {
+            $env:TOOLBAG_PLUGIN_PUBKEY_VAR
+          }
+          if ([string]::IsNullOrWhiteSpace($pubkey)) {
             Write-Host "TOOLBAG_PLUGIN_PUBKEY var not set; skipping verification round-trip."
             exit 0
           }
           $archive = "${{ steps.pack.outputs.archive }}"
           $pubFile = Join-Path $env:RUNNER_TEMP "pub.key"
-          $env:TOOLBAG_PLUGIN_PUBKEY | Out-File -Encoding ascii -NoNewline -FilePath $pubFile
+          $pubkey | Out-File -Encoding ascii -NoNewline -FilePath $pubFile
           & minisign -Vm "$archive" -p $pubFile
           Remove-Item $pubFile -Force
 
