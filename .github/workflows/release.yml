@@ -8,24 +8,73 @@ on:
 permissions:
   contents: write
 
+env:
+  MINISIGN_VERSION: "0.12"
+
 jobs:
   build-and-release:
     runs-on: windows-latest
+    outputs:
+      id: ${{ steps.meta.outputs.id }}
+      version: ${{ steps.meta.outputs.version }}
+      slug: ${{ steps.meta.outputs.slug }}
+      archive_name: ${{ steps.meta.outputs.archive_name }}
+      sha256: ${{ steps.pack.outputs.sha256 }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Read version from tool.json
+      # ── Fail fast if signing secrets are missing ───────────────────────────
+      # The previous `if: env.X != ''` pattern silently skipped signing when
+      # the secret wasn't configured, which is a footgun for release builds:
+      # we want every release to ship a `.sig`.  Make missing secrets an
+      # explicit hard error here, before we waste compile time.
+      - name: Require TOOLBAG_PLUGIN_PRIVKEY
+        env:
+          TOOLBAG_PLUGIN_PRIVKEY: ${{ secrets.TOOLBAG_PLUGIN_PRIVKEY }}
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:TOOLBAG_PLUGIN_PRIVKEY)) {
+            Write-Error @"
+          Missing required secret: TOOLBAG_PLUGIN_PRIVKEY
+
+          Toolbag plugin releases must be signed with minisign so the Toolbag
+          client can verify them. Generate a key pair with `minisign -G` and
+          add the **encoded private key** to repository secrets under the
+          name TOOLBAG_PLUGIN_PRIVKEY.
+
+          If the key is password-protected, also set TOOLBAG_PLUGIN_PRIVKEY_PASSWORD.
+          "@
+            exit 1
+          }
+          Write-Host "✓ TOOLBAG_PLUGIN_PRIVKEY is present"
+
+      - name: Read plugin metadata
         id: meta
         shell: pwsh
         run: |
-          $json = Get-Content tool.json | ConvertFrom-Json
+          $json = Get-Content tool.json -Raw -Encoding utf8 | ConvertFrom-Json
           $id = $json.id
-          $version = $json.version
-          $slug = "toolbag-plugin-$($id -replace '\.', '-')-$version"
-          "id=$id" | Out-File -Append $env:GITHUB_OUTPUT
-          "version=$version" | Out-File -Append $env:GITHUB_OUTPUT
-          "slug=$slug" | Out-File -Append $env:GITHUB_OUTPUT
+          $manifestVersion = $json.version
+          $tag = "${{ github.ref_name }}"
+          $tagVersion = if ($tag -match '^v(.+)$') { $Matches[1] } else { $tag }
+
+          # Tag and manifest must agree so we don't ship a v0.1.0 archive
+          # that internally declares 0.2.0.
+          if ($manifestVersion -ne $tagVersion -and "${{ github.event_name }}" -eq "push") {
+            Write-Error "tool.json version ($manifestVersion) does not match tag ($tagVersion)"
+            exit 1
+          }
+
+          $slug = "toolbag-plugin-$($id -replace '\.', '-')-$manifestVersion"
+          $archive = "$slug.tbpkg"
+          "id=$id"                  | Out-File -Append $env:GITHUB_OUTPUT
+          "version=$manifestVersion"| Out-File -Append $env:GITHUB_OUTPUT
+          "slug=$slug"              | Out-File -Append $env:GITHUB_OUTPUT
+          "archive_name=$archive"   | Out-File -Append $env:GITHUB_OUTPUT
+          "release_tag=$tag"        | Out-File -Append $env:GITHUB_OUTPUT
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -50,38 +99,85 @@ jobs:
           $slug = "${{ steps.meta.outputs.slug }}"
           $payload = "dist/$slug"
           New-Item -ItemType Directory -Force -Path "$payload/bin" | Out-Null
-          Copy-Item tool.json   "$payload/"
-          Copy-Item ui.json     "$payload/"
-          Copy-Item icon.svg    "$payload/"
-          Copy-Item README.md   "$payload/"
+          Copy-Item tool.json    "$payload/"
+          Copy-Item ui.json      "$payload/"
+          Copy-Item icon.svg     "$payload/"
+          Copy-Item README.md    "$payload/"
           Copy-Item changelog.md "$payload/"
           Copy-Item sidecar/target/release/sidecar-windows-x64.exe "$payload/bin/"
+
           $zip = "dist/$slug.zip"
           $archive = "dist/$slug.tbpkg"
           Compress-Archive -Path "$payload/*" -DestinationPath $zip -Force
           Move-Item $zip $archive -Force
+
           $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
           $hash | Out-File -NoNewline -Encoding ascii "$archive.sha256"
           "archive=$archive" | Out-File -Append $env:GITHUB_OUTPUT
-          "sha256=$hash"      | Out-File -Append $env:GITHUB_OUTPUT
+          "sha256=$hash"     | Out-File -Append $env:GITHUB_OUTPUT
+          Write-Host "Packed $archive (sha256=$hash)"
+
+      - name: Install minisign
+        shell: pwsh
+        run: |
+          $ver = "${{ env.MINISIGN_VERSION }}"
+          $url = "https://github.com/jedisct1/minisign/releases/download/$ver/minisign-$ver-win64.zip"
+          $zip = Join-Path $env:RUNNER_TEMP "minisign.zip"
+          $extract = Join-Path $env:RUNNER_TEMP "minisign"
+          Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+          Expand-Archive -Path $zip -DestinationPath $extract -Force
+          $bin = Get-ChildItem -Path $extract -Filter "minisign.exe" -Recurse | Select-Object -First 1
+          if (-not $bin) {
+            Write-Error "Failed to locate minisign.exe in download"
+            exit 1
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $bin.DirectoryName
+          & $bin.FullName -v
 
       - name: Sign payload with minisign
-        if: env.TOOLBAG_PLUGIN_PRIVKEY != ''
         env:
           TOOLBAG_PLUGIN_PRIVKEY: ${{ secrets.TOOLBAG_PLUGIN_PRIVKEY }}
           TOOLBAG_PLUGIN_PRIVKEY_PASSWORD: ${{ secrets.TOOLBAG_PLUGIN_PRIVKEY_PASSWORD }}
         shell: pwsh
         run: |
-          choco install minisign --no-progress -y
           $archive = "${{ steps.pack.outputs.archive }}"
-          $keyPath = Join-Path $env:RUNNER_TEMP "plugin.key"
-          $env:TOOLBAG_PLUGIN_PRIVKEY | Out-File -Encoding ascii -NoNewline $keyPath
-          if ($env:TOOLBAG_PLUGIN_PRIVKEY_PASSWORD) {
-            $env:TOOLBAG_PLUGIN_PRIVKEY_PASSWORD | minisign -Sm "$archive" -s $keyPath -t "toolbag-plugin signature"
-          } else {
-            minisign -Wm "$archive" -s $keyPath -t "toolbag-plugin signature"
+          $keyFile = Join-Path $env:RUNNER_TEMP "plugin.key"
+          $env:TOOLBAG_PLUGIN_PRIVKEY | Out-File -Encoding ascii -NoNewline -FilePath $keyFile
+
+          $pwd = if ($env:TOOLBAG_PLUGIN_PRIVKEY_PASSWORD) { $env:TOOLBAG_PLUGIN_PRIVKEY_PASSWORD } else { "" }
+          $comment = "Toolbag plugin ${{ steps.meta.outputs.id }} v${{ steps.meta.outputs.version }}"
+
+          # minisign reads the password from stdin when not on a TTY. Always pipe
+          # something (empty string for unencrypted keys) so the binary never
+          # hangs waiting for input.
+          $pwd | & minisign -Sm "$archive" -s $keyFile -t $comment
+
+          Remove-Item $keyFile -Force
+
+          # jedisct1/minisign writes alongside as .minisig. Rename so we stay on
+          # the convention the Toolbag client uses (.sig).
+          $sig = "$archive.minisig"
+          if (-not (Test-Path $sig)) {
+            Write-Error "minisign did not produce $sig — signing failed."
+            exit 1
           }
-          Remove-Item $keyPath
+          Move-Item $sig "$archive.sig" -Force
+          Write-Host "Signed → $archive.sig"
+
+      - name: Verify signature with minisign-verify
+        shell: pwsh
+        env:
+          TOOLBAG_PLUGIN_PUBKEY: ${{ vars.TOOLBAG_PLUGIN_PUBKEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:TOOLBAG_PLUGIN_PUBKEY)) {
+            Write-Host "TOOLBAG_PLUGIN_PUBKEY var not set; skipping verification round-trip."
+            exit 0
+          }
+          $archive = "${{ steps.pack.outputs.archive }}"
+          $pubFile = Join-Path $env:RUNNER_TEMP "pub.key"
+          $env:TOOLBAG_PLUGIN_PUBKEY | Out-File -Encoding ascii -NoNewline -FilePath $pubFile
+          & minisign -Vm "$archive" -p $pubFile
+          Remove-Item $pubFile -Force
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -95,3 +191,79 @@ jobs:
             ${{ steps.pack.outputs.archive }}.sig
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  registry-pr:
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    # Skip on workflow_dispatch runs that didn't push a tag.
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Require REGISTRY_PR_TOKEN
+        env:
+          REGISTRY_PR_TOKEN: ${{ secrets.REGISTRY_PR_TOKEN }}
+        run: |
+          if [ -z "$REGISTRY_PR_TOKEN" ]; then
+            cat <<'EOF' >&2
+          ❌ Missing required secret: REGISTRY_PR_TOKEN
+
+          To open a PR against LFenX/Toolbag-Registry the workflow needs a
+          PAT (fine-grained or classic) with:
+            - Contents: write   on LFenX/Toolbag-Registry
+            - Pull requests: write   on LFenX/Toolbag-Registry
+
+          Create one and add it as a repository secret called REGISTRY_PR_TOKEN.
+          EOF
+            exit 1
+          fi
+
+      - name: Checkout this plugin (for tool.json / changelog)
+        uses: actions/checkout@v4
+        with:
+          path: plugin
+
+      - name: Checkout Toolbag-Registry
+        uses: actions/checkout@v4
+        with:
+          repository: LFenX/Toolbag-Registry
+          token: ${{ secrets.REGISTRY_PR_TOKEN }}
+          path: registry
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Merge release entry into plugins/<id>.json
+        env:
+          PLUGIN_REPO: ${{ github.repository }}
+          PLUGIN_TAG: ${{ needs.build-and-release.outputs.release_tag }}
+          PLUGIN_ID: ${{ needs.build-and-release.outputs.id }}
+          PLUGIN_VERSION: ${{ needs.build-and-release.outputs.version }}
+          PLUGIN_ARCHIVE_NAME: ${{ needs.build-and-release.outputs.archive_name }}
+          PLUGIN_SHA256: ${{ needs.build-and-release.outputs.sha256 }}
+        run: node plugin/.github/scripts/update-registry.mjs registry plugin
+
+      - name: Create or update PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.REGISTRY_PR_TOKEN }}
+          path: registry
+          branch: bump/${{ needs.build-and-release.outputs.id }}-${{ needs.build-and-release.outputs.version }}
+          commit-message: |
+            ${{ needs.build-and-release.outputs.id }} → ${{ needs.build-and-release.outputs.version }}
+          title: "${{ needs.build-and-release.outputs.id }} → v${{ needs.build-and-release.outputs.version }}"
+          body: |
+            Automated PR opened by the plugin's release workflow.
+
+            - Plugin ID: `${{ needs.build-and-release.outputs.id }}`
+            - Version: `${{ needs.build-and-release.outputs.version }}`
+            - Source: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.build-and-release.outputs.release_tag }}
+            - SHA-256: `${{ needs.build-and-release.outputs.sha256 }}`
+
+            Verify the signature locally before merging:
+            ```
+            minisign -Vm <download>.tbpkg -p <toolbag-pubkey>
+            ```
+          delete-branch: false
+          add-paths: |
+            plugins/*.json

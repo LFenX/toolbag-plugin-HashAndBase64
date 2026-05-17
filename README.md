@@ -73,18 +73,55 @@ CI（`.github/workflows/release.yml`）会在打 tag 时自动完成全部步骤
 
 ## 发布
 
+### 必需的仓库 Secret / Variable
+
+> **签名是强制的**：未配置 `TOOLBAG_PLUGIN_PRIVKEY` 时 release workflow 会直接 fail，不会"静默跳过签名"。Toolbag 客户端在 release 构建里对未签名插件零容忍。
+
+| 名称 | 类型 | 是否必需 | 用途 |
+|---|---|---|---|
+| `TOOLBAG_PLUGIN_PRIVKEY` | Secret | ✅ 必需 | minisign 私钥文本（`minisign -G` 产物中的 `*.key` 文件内容） |
+| `TOOLBAG_PLUGIN_PRIVKEY_PASSWORD` | Secret | 私钥带密码时必需 | 解锁私钥的口令 |
+| `REGISTRY_PR_TOKEN` | Secret | ✅ 必需（自动开 Registry PR） | PAT，对 `LFenX/Toolbag-Registry` 需要 `Contents: write` + `Pull requests: write` |
+| `TOOLBAG_PLUGIN_PUBKEY` | Variable（非 secret） | 可选 | 配上之后 workflow 会在签名后再用公钥 verify 一次，作为冒烟检查 |
+
+### 触发发布
+
 ```powershell
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-Release Workflow 会：
+Release Workflow 干的事（`.github/workflows/release.yml`）：
 
-1. 在 Windows runner 上 `cargo build --release` 编译 sidecar。
-2. 打包 `.tbpkg` 并生成 `.sha256`。
-3. 用 GitHub Secret `TOOLBAG_PLUGIN_PRIVKEY` 做 minisign 签名。
-4. 创建 GitHub Release，上传 `.tbpkg` / `.tbpkg.sig` / `.tbpkg.sha256`。
-5. （可选）向 [Toolbag-Registry](https://github.com/LFenX/Toolbag-Registry) 提 PR 更新 `plugins/com.lfen.toolbag.hash-and-base64.json`。
+1. **预检**：缺 `TOOLBAG_PLUGIN_PRIVKEY` 或 `REGISTRY_PR_TOKEN` 时立刻 fail，不浪费编译时间。
+2. **元数据校验**：tag 版本号必须和 `tool.json.version` 一致；不一致就 fail。
+3. **编译 sidecar**：`cargo build --release`（Windows runner），缓存 cargo 产物。
+4. **打包**：拷贝 `tool.json` / `ui.json` / `icon.svg` / `README.md` / `changelog.md` / `bin/sidecar-windows-x64.exe`，压成 `.tbpkg`，写出 `.sha256`。
+5. **签名**：用 `jedisct1/minisign 0.12`（CI 自动从 GitHub Release 下载，不走 choco），产出 `<archive>.sig`。
+6. **回环校验**：如果配了 `vars.TOOLBAG_PLUGIN_PUBKEY`，在 release 上传前用该公钥 verify 一次签名。
+7. **创建 GitHub Release**：上传 `.tbpkg` / `.tbpkg.sig` / `.tbpkg.sha256`。
+8. **自动开 Registry PR**：在 `LFenX/Toolbag-Registry` checkout 中跑 `.github/scripts/update-registry.mjs`，把这次 release 的条目写进 `plugins/com.lfen.toolbag.hash-and-base64.json`（已存在则覆盖同版本、prepend 新版本，保留旧 release 历史），再用 `peter-evans/create-pull-request@v6` 推到 `bump/<id>-<version>` 分支并开 PR。
+
+### 旁路：手工本地打包
+
+如果你只想在本机测试不发布：
+
+```powershell
+$plugin = "toolbag-plugin-com-lfen-toolbag-hash-and-base64-0.1.0"
+$dist = "dist\$plugin"
+Remove-Item -Recurse -Force dist -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path "$dist\bin" | Out-Null
+Copy-Item tool.json ui.json icon.svg README.md changelog.md "$dist\"
+Copy-Item sidecar\target\release\sidecar-windows-x64.exe "$dist\bin\"
+Compress-Archive -Path "$dist\*" -DestinationPath "dist\$plugin.zip"
+Move-Item "dist\$plugin.zip" "dist\$plugin.tbpkg" -Force
+```
+
+签名（可选，本机调试可以跳过；release 构建的 Toolbag 会拒绝未签名包）：
+
+```powershell
+minisign -Sm "dist\$plugin.tbpkg" -s $env:USERPROFILE\.minisign\toolbag-plugin.key
+```
 
 ## 协议
 
