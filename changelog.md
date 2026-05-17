@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2 - 2026-05-17
+
+- Fixed the initial empty form by treating an unset `mode` as Hash mode.
+
 ## 0.1.1 - 2026-05-17
 
 - Fixed mode switching: fields now show only for the selected task.

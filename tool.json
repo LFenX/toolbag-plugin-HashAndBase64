@@ -2,7 +2,7 @@
   "$schema": "https://toolbag.lfen.dev/schemas/plugin/1.json",
   "id": "com.lfen.toolbag.hash-and-base64",
   "name": "Hash & Base64",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "category": "实用",
   "tags": ["哈希", "Base64", "HMAC", "JWT", "调试"],
   "description": "本地计算文本 Hash、Base64 编解码、HMAC-SHA256 签名与 JWT 解析。",

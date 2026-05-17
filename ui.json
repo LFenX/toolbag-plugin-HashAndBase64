@@ -32,7 +32,7 @@
           { "value": "sha256", "label": "SHA-256" },
           { "value": "sha512", "label": "SHA-512" }
         ],
-        "visibleWhen": "mode == null || mode == 'hash'"
+        "visibleWhen": "!mode || mode == 'hash'"
       },
       {
         "key": "hash_input",
@@ -42,7 +42,7 @@
         "monospace": true,
         "placeholder": "粘贴要计算 Hash 的文本，例如：hello 世界",
         "required": true,
-        "visibleWhen": "mode == null || mode == 'hash'"
+        "visibleWhen": "!mode || mode == 'hash'"
       },
       {
         "key": "b64_plain",
