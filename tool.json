@@ -1,0 +1,31 @@
+{
+  "$schema": "https://toolbag.lfen.dev/schemas/plugin/1.json",
+  "id": "com.lfen.toolbag.hash-and-base64",
+  "name": "Hash & Base64",
+  "version": "0.1.0",
+  "category": "实用",
+  "tags": ["加密", "编码", "调试", "实用"],
+  "description": "本地计算文本哈希、Base64 编解码、HMAC 签名与 JWT 解析。",
+  "detailDescription": "支持 MD5/SHA-1/SHA-256/SHA-512 文本哈希、Base64 编解码（UTF-8 友好，正确处理中文与 Emoji）、HMAC-SHA256 签名（适合 Webhook/接口调试）以及 JWT 头部与载荷解析。全部在本机运行，不联网。",
+  "author": { "name": "LFen", "url": "https://github.com/LFenX" },
+  "license": "MIT",
+  "homepage": "https://github.com/LFenX/toolbag-plugin-HashAndBase64",
+  "minAppVersion": "0.2.0",
+  "riskLevel": "safe",
+  "requiresElevation": false,
+  "permissionRequirement": "普通权限",
+  "dataAccess": "仅在内存中处理用户输入，不读写文件、不联网",
+  "icon": "icon.svg",
+  "runtime": {
+    "kind": "sidecar",
+    "binary": "bin/sidecar-windows-x64.exe",
+    "args": [],
+    "env": {},
+    "startupTimeoutMs": 3000,
+    "shutdownTimeoutMs": 1500
+  },
+  "commands": [
+    { "id": "run", "label": "执行" }
+  ],
+  "ui": "ui.json"
+}

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="128" y2="128" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5b8def"/>
+      <stop offset="1" stop-color="#3a55d6"/>
+    </linearGradient>
+  </defs>
+  <rect x="6" y="6" width="116" height="116" rx="26" fill="url(#g)"/>
+  <g fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-weight="700">
+    <text x="22" y="60" font-size="28" letter-spacing="-1">#</text>
+    <text x="46" y="60" font-size="22" letter-spacing="0">256</text>
+    <text x="22" y="100" font-size="20" letter-spacing="-0.5">b64</text>
+    <text x="74" y="100" font-size="20" letter-spacing="-0.5">jwt</text>
+  </g>
+  <path d="M16 70 H112" stroke="rgba(255,255,255,0.35)" stroke-width="1.5"/>
+</svg>

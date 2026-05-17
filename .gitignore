@@ -1,0 +1,5 @@
+/sidecar/target
+/dist
+/*.tbpkg
+/*.tbpkg.sig
+/*.tbpkg.sha256

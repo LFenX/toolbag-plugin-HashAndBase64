@@ -1,0 +1,97 @@
+name: Release plugin
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read version from tool.json
+        id: meta
+        shell: pwsh
+        run: |
+          $json = Get-Content tool.json | ConvertFrom-Json
+          $id = $json.id
+          $version = $json.version
+          $slug = "toolbag-plugin-$($id -replace '\.', '-')-$version"
+          "id=$id" | Out-File -Append $env:GITHUB_OUTPUT
+          "version=$version" | Out-File -Append $env:GITHUB_OUTPUT
+          "slug=$slug" | Out-File -Append $env:GITHUB_OUTPUT
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            sidecar/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('sidecar/Cargo.lock', 'sidecar/Cargo.toml') }}
+
+      - name: Build sidecar (release)
+        working-directory: sidecar
+        run: cargo build --release
+
+      - name: Assemble plugin payload
+        id: pack
+        shell: pwsh
+        run: |
+          $slug = "${{ steps.meta.outputs.slug }}"
+          $payload = "dist/$slug"
+          New-Item -ItemType Directory -Force -Path "$payload/bin" | Out-Null
+          Copy-Item tool.json   "$payload/"
+          Copy-Item ui.json     "$payload/"
+          Copy-Item icon.svg    "$payload/"
+          Copy-Item README.md   "$payload/"
+          Copy-Item changelog.md "$payload/"
+          Copy-Item sidecar/target/release/sidecar-windows-x64.exe "$payload/bin/"
+          $zip = "dist/$slug.zip"
+          $archive = "dist/$slug.tbpkg"
+          Compress-Archive -Path "$payload/*" -DestinationPath $zip -Force
+          Move-Item $zip $archive -Force
+          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
+          $hash | Out-File -NoNewline -Encoding ascii "$archive.sha256"
+          "archive=$archive" | Out-File -Append $env:GITHUB_OUTPUT
+          "sha256=$hash"      | Out-File -Append $env:GITHUB_OUTPUT
+
+      - name: Sign payload with minisign
+        if: env.TOOLBAG_PLUGIN_PRIVKEY != ''
+        env:
+          TOOLBAG_PLUGIN_PRIVKEY: ${{ secrets.TOOLBAG_PLUGIN_PRIVKEY }}
+          TOOLBAG_PLUGIN_PRIVKEY_PASSWORD: ${{ secrets.TOOLBAG_PLUGIN_PRIVKEY_PASSWORD }}
+        shell: pwsh
+        run: |
+          choco install minisign --no-progress -y
+          $archive = "${{ steps.pack.outputs.archive }}"
+          $keyPath = Join-Path $env:RUNNER_TEMP "plugin.key"
+          $env:TOOLBAG_PLUGIN_PRIVKEY | Out-File -Encoding ascii -NoNewline $keyPath
+          if ($env:TOOLBAG_PLUGIN_PRIVKEY_PASSWORD) {
+            $env:TOOLBAG_PLUGIN_PRIVKEY_PASSWORD | minisign -Sm "$archive" -s $keyPath -t "toolbag-plugin signature"
+          } else {
+            minisign -Wm "$archive" -s $keyPath -t "toolbag-plugin signature"
+          }
+          Remove-Item $keyPath
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ steps.meta.outputs.id }} v${{ steps.meta.outputs.version }}
+          draft: false
+          generate_release_notes: true
+          files: |
+            ${{ steps.pack.outputs.archive }}
+            ${{ steps.pack.outputs.archive }}.sha256
+            ${{ steps.pack.outputs.archive }}.sig
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
