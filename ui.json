@@ -7,7 +7,7 @@
   },
   "left": {
     "title": "输入",
-    "description": "选择模式后填写对应字段，点击「执行」运行。",
+    "description": "常用 Hash、Base64、HMAC 与 JWT 小工具，所有计算都在本机完成。",
     "fields": [
       {
         "key": "mode",
@@ -15,12 +15,12 @@
         "default": "hash",
         "options": [
           { "value": "hash", "label": "Hash" },
-          { "value": "base64", "label": "Base64" },
-          { "value": "hmac", "label": "HMAC-SHA256" },
+          { "value": "base64_encode", "label": "Base64 编码" },
+          { "value": "base64_decode", "label": "Base64 解码" },
+          { "value": "hmac", "label": "HMAC" },
           { "value": "jwt", "label": "JWT" }
         ]
       },
-
       {
         "key": "hash_algo",
         "type": "radioGroup",
@@ -32,69 +32,71 @@
           { "value": "sha256", "label": "SHA-256" },
           { "value": "sha512", "label": "SHA-512" }
         ],
-        "visibleWhen": "mode==hash"
+        "visibleWhen": "mode == null || mode == 'hash'"
       },
       {
         "key": "hash_input",
         "type": "textarea",
-        "label": "文本",
-        "rows": 8,
+        "label": "原文",
+        "rows": 10,
         "monospace": true,
-        "placeholder": "在这里粘贴或输入要计算哈希的文本…",
-        "visibleWhen": "mode==hash"
-      },
-
-      {
-        "key": "b64_op",
-        "type": "radioGroup",
-        "label": "操作",
-        "default": "encode",
-        "options": [
-          { "value": "encode", "label": "编码（文本 → Base64）" },
-          { "value": "decode", "label": "解码（Base64 → 文本）" }
-        ],
-        "visibleWhen": "mode==base64"
+        "placeholder": "粘贴要计算 Hash 的文本，例如：hello 世界",
+        "required": true,
+        "visibleWhen": "mode == null || mode == 'hash'"
       },
       {
-        "key": "b64_input",
+        "key": "b64_plain",
         "type": "textarea",
-        "label": "内容",
-        "rows": 8,
+        "label": "原文",
+        "rows": 12,
         "monospace": true,
-        "placeholder": "支持中文与 Emoji；解码时按 UTF-8 解释字节。",
-        "visibleWhen": "mode==base64"
+        "placeholder": "粘贴要编码成 Base64 的文本，支持中文和 Emoji",
+        "required": true,
+        "visibleWhen": "mode == 'base64_encode'"
       },
-
+      {
+        "key": "b64_encoded",
+        "type": "textarea",
+        "label": "Base64",
+        "rows": 12,
+        "monospace": true,
+        "placeholder": "粘贴要解码的 Base64，标准 Base64 和 URL-safe Base64 都支持",
+        "required": true,
+        "visibleWhen": "mode == 'base64_decode'"
+      },
       {
         "key": "hmac_secret",
         "type": "text",
-        "label": "Secret",
-        "placeholder": "用于签名的密钥（明文）",
-        "visibleWhen": "mode==hmac"
+        "label": "密钥",
+        "placeholder": "例如：my-secret",
+        "required": true,
+        "visibleWhen": "mode == 'hmac'"
       },
       {
         "key": "hmac_payload",
         "type": "textarea",
-        "label": "Payload",
-        "rows": 8,
+        "label": "正文",
+        "rows": 10,
         "monospace": true,
-        "placeholder": "要签名的内容…",
-        "visibleWhen": "mode==hmac"
+        "placeholder": "粘贴要签名的内容，例如：foo=bar&time=1234",
+        "required": true,
+        "visibleWhen": "mode == 'hmac'"
       },
-
       {
         "key": "jwt_token",
         "type": "textarea",
-        "label": "JWT Token",
-        "rows": 8,
+        "label": "JWT",
+        "rows": 10,
         "monospace": true,
-        "placeholder": "粘贴形如 xxx.yyy.zzz 的 JWT…",
-        "visibleWhen": "mode==jwt"
+        "placeholder": "粘贴形如 header.payload.signature 的 JWT",
+        "help": "只解析 header 和 payload，不做签名验证。",
+        "required": true,
+        "visibleWhen": "mode == 'jwt'"
       }
     ],
     "actions": [
       { "id": "run", "label": "执行", "primary": true, "command": "run" },
-      { "id": "copy", "label": "复制结果", "kind": "copy", "source": "$result" },
+      { "id": "copy", "label": "复制核心结果", "kind": "copy", "source": "$result.data.result" },
       { "id": "clear", "label": "清空", "kind": "reset" }
     ]
   },
@@ -104,7 +106,7 @@
     "renderers": [
       { "type": "status" },
       { "type": "keyValue", "source": "$result.summary" },
-      { "type": "code", "source": "$result.data", "language": "json", "wrap": true }
+      { "type": "code", "source": "$result.data.result", "language": "text", "wrap": true }
     ]
   }
 }
