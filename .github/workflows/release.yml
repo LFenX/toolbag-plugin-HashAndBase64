@@ -184,7 +184,7 @@ jobs:
           $archive = "${{ steps.pack.outputs.archive }}"
           $pubFile = Join-Path $env:RUNNER_TEMP "pub.key"
           $pubkey | Out-File -Encoding ascii -NoNewline -FilePath $pubFile
-          & minisign -Vm "$archive" -p $pubFile
+          & minisign -Vm "$archive" -x "$archive.sig" -p $pubFile
           Remove-Item $pubFile -Force
 
       - name: Create GitHub Release
